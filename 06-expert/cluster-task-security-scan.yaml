@@ -1,0 +1,62 @@
+apiVersion: tekton.dev/v1
+kind: ClusterTask
+metadata:
+  name: security-scan
+  labels:
+    app.kubernetes.io/version: "1.0"
+  annotations:
+    tekton.dev/displayName: "Security Scan (Trivy)"
+    tekton.dev/description: "Scans a container image for vulnerabilities using Trivy."
+spec:
+  description: >-
+    Runs Trivy vulnerability scanner on a container image.
+    Fails the task if CRITICAL vulnerabilities are found.
+
+  params:
+    - name: image
+      type: string
+      description: Full image reference to scan.
+    - name: severity
+      type: string
+      default: "CRITICAL,HIGH"
+      description: Comma-separated severity levels to report.
+    - name: exit-code
+      type: string
+      default: "1"
+      description: Exit code when vulnerabilities are found (0 = report only).
+
+  results:
+    - name: scan-status
+      description: "PASSED or FAILED"
+    - name: vulnerability-count
+      description: Number of vulnerabilities found.
+
+  steps:
+    - name: scan
+      image: aquasec/trivy:latest
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        echo "=== Scanning $(params.image) with Trivy ==="
+        trivy image \
+          --exit-code $(params.exit-code) \
+          --severity $(params.severity) \
+          --format json \
+          --output /tmp/trivy-report.json \
+          $(params.image) || SCAN_EXIT=$?
+
+        VULN_COUNT=$(cat /tmp/trivy-report.json \
+          | grep -o '"VulnerabilityID"' | wc -l | tr -d ' ')
+
+        echo "Vulnerabilities found: ${VULN_COUNT}"
+        printf "%s" "${VULN_COUNT}" > $(results.vulnerability-count.path)
+
+        if [ "${SCAN_EXIT:-0}" != "0" ]; then
+          printf "FAILED" > $(results.scan-status.path)
+          echo "CRITICAL/HIGH vulnerabilities detected – failing task."
+          exit 1
+        fi
+
+        printf "PASSED" > $(results.scan-status.path)
+        echo "Scan passed."

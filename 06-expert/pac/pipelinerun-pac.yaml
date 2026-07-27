@@ -1,0 +1,40 @@
+# Pipeline as Code – .tekton/pipelinerun.yaml
+# Place this file in your repository under .tekton/ directory.
+# Tekton Pipelines-as-Code will automatically pick it up on push/PR events.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: ci-pipeline-run
+  annotations:
+    # PaC annotations
+    pipelinesascode.tekton.dev/on-event: "[push, pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main, release-*]"
+    pipelinesascode.tekton.dev/max-keep-runs: "5"
+    pipelinesascode.tekton.dev/task: "git-clone, kaniko"
+spec:
+  pipelineRef:
+    name: ci-pipeline-reliable
+  params:
+    - name: repo-url
+      value: "{{repo_url}}"
+    - name: revision
+      value: "{{revision}}"
+    - name: image-name
+      value: "icr.io/your-namespace/{{repo_name}}"
+    - name: image-tag
+      value: "{{revision}}"
+    - name: target-environment
+      value: staging
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 500Mi
+    - name: docker-credentials
+      secret:
+        secretName: registry-credentials
+  taskRunTemplate:
+    serviceAccountName: pipeline-sa

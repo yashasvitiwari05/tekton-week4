@@ -1,0 +1,52 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: ci-pipeline-trigger-template
+  namespace: default
+spec:
+  params:
+    - name: repo-url
+    - name: revision
+    - name: image-name
+    - name: image-tag
+    - name: branch
+      default: "main"
+    - name: pusher
+      default: "unknown"
+
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        generateName: ci-pipeline-run-
+        labels:
+          tekton.dev/pipeline: ci-pipeline-reliable
+          triggered-by: $(tt.params.pusher)
+          branch: $(tt.params.branch)
+      spec:
+        pipelineRef:
+          name: ci-pipeline-reliable
+        params:
+          - name: repo-url
+            value: $(tt.params.repo-url)
+          - name: revision
+            value: $(tt.params.revision)
+          - name: image-name
+            value: $(tt.params.image-name)
+          - name: image-tag
+            value: $(tt.params.image-tag)
+          - name: target-environment
+            value: staging
+        workspaces:
+          - name: source
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                resources:
+                  requests:
+                    storage: 500Mi
+          - name: docker-credentials
+            secret:
+              secretName: registry-credentials
+        taskRunTemplate:
+          serviceAccountName: pipeline-sa

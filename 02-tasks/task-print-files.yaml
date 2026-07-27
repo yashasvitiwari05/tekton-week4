@@ -1,0 +1,68 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: print-files
+  labels:
+    app.kubernetes.io/version: "1.0"
+  annotations:
+    tekton.dev/displayName: "Print Files"
+    tekton.dev/description: "Lists and optionally prints the content of files in the workspace."
+spec:
+  description: >-
+    Prints a recursive directory listing of the workspace and optionally
+    cats every file under a given sub-path for quick inspection in pipeline logs.
+
+  params:
+    - name: sub-path
+      type: string
+      default: "."
+      description: Sub-path inside the workspace to inspect.
+    - name: show-content
+      type: string
+      default: "false"
+      description: Set to 'true' to also print file contents.
+
+  workspaces:
+    - name: source
+      description: Workspace containing the cloned repository.
+
+  results:
+    - name: file-count
+      description: Number of files found under sub-path.
+
+  steps:
+    - name: list-files
+      image: busybox:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        TARGET="$(workspaces.source.path)/$(params.sub-path)"
+
+        echo "=== Directory listing of ${TARGET} ==="
+        find "${TARGET}" -type f | sort
+
+        COUNT=$(find "${TARGET}" -type f | wc -l | tr -d ' ')
+        echo ""
+        echo "Total files: ${COUNT}"
+        printf "%s" "${COUNT}" > $(results.file-count.path)
+
+    - name: show-content
+      image: busybox:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        if [ "$(params.show-content)" != "true" ]; then
+          echo "show-content=false – skipping file dump."
+          exit 0
+        fi
+
+        TARGET="$(workspaces.source.path)/$(params.sub-path)"
+        find "${TARGET}" -type f | sort | while read -r f; do
+          echo ""
+          echo "====== ${f} ======"
+          cat "${f}"
+        done

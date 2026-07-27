@@ -1,0 +1,96 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: ci-pipeline-optimized
+  annotations:
+    tekton.dev/displayName: "Optimized CI Pipeline (Matrix + Resource Limits)"
+spec:
+  params:
+    - name: repo-url
+      type: string
+    - name: revision
+      type: string
+      default: "main"
+    - name: image-name
+      type: string
+
+  workspaces:
+    - name: source
+    - name: docker-credentials
+
+  tasks:
+    - name: clone-repo
+      taskRef:
+        name: clone-repository
+      params:
+        - name: repo-url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.revision)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Matrix execution – run tests on multiple Node versions in parallel
+    - name: test-matrix
+      taskRef:
+        name: run-tests
+      runAfter: [clone-repo]
+      timeout: "20m"
+      matrix:
+        params:
+          - name: node-version
+            value:
+              - "18"
+              - "20"
+              - "22"
+      workspaces:
+        - name: source
+          workspace: source
+      # Resource limits per task step
+      taskRunTemplate:
+        podTemplate:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+          containers:
+            - name: run
+              resources:
+                requests:
+                  cpu: "250m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"
+
+    - name: build-image
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: kaniko
+          - name: namespace
+            value: tekton-pipelines
+      runAfter: [test-matrix]
+      timeout: "20m"
+      params:
+        - name: IMAGE
+          value: $(params.image-name):$(params.revision)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: dockerconfig
+          workspace: docker-credentials
+      taskRunTemplate:
+        podTemplate:
+          containers:
+            - name: build-and-push
+              resources:
+                requests:
+                  cpu: "500m"
+                  memory: "1Gi"
+                limits:
+                  cpu: "2"
+                  memory: "4Gi"

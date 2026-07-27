@@ -1,0 +1,19 @@
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: clone-repository-run-
+  labels:
+    tekton.dev/task: clone-repository
+spec:
+  taskRef:
+    name: clone-repository
+  params:
+    - name: repo-url
+      value: "https://github.com/tektoncd/catalog.git"
+    - name: revision
+      value: "main"
+    - name: depth
+      value: "1"
+  workspaces:
+    - name: source
+      emptyDir: {}

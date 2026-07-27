@@ -1,0 +1,76 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: kubernetes-deploy
+  annotations:
+    tekton.dev/displayName: "Deploy to Kubernetes"
+spec:
+  description: >-
+    Updates a Kubernetes Deployment image and waits for rollout to complete.
+
+  params:
+    - name: image
+      type: string
+      description: Full image reference, e.g. docker.io/myorg/myapp:tag
+    - name: namespace
+      type: string
+      default: "default"
+    - name: deployment-name
+      type: string
+      default: "myapp"
+    - name: container-name
+      type: string
+      default: "app"
+
+  workspaces:
+    - name: source
+      description: Workspace with k8s manifests (optional).
+
+  results:
+    - name: rollout-status
+      description: kubectl rollout output.
+
+  steps:
+    - name: apply-manifests
+      image: bitnami/kubectl:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        echo "=== Applying Kubernetes manifests ==="
+        if ls k8s/*.yaml 1>/dev/null 2>&1; then
+          kubectl apply -f k8s/ -n $(params.namespace)
+        else
+          echo "No k8s/ manifests found – skipping apply."
+        fi
+
+    - name: update-image
+      image: bitnami/kubectl:latest
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        echo "=== Updating image to $(params.image) ==="
+        kubectl set image deployment/$(params.deployment-name) \
+          $(params.container-name)=$(params.image) \
+          -n $(params.namespace)
+
+    - name: verify-rollout
+      image: bitnami/kubectl:latest
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        echo "=== Waiting for rollout ==="
+        kubectl rollout status deployment/$(params.deployment-name) \
+          -n $(params.namespace) \
+          --timeout=5m | tee /tekton/results/rollout-status
+
+        echo ""
+        echo "=== Pods ==="
+        kubectl get pods -n $(params.namespace) -l app=$(params.deployment-name)
+
+        echo ""
+        echo "=== Services ==="
+        kubectl get svc  -n $(params.namespace) -l app=$(params.deployment-name)

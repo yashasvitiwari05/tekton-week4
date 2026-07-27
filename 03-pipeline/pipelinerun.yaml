@@ -1,0 +1,42 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: ci-pipeline-run-
+  labels:
+    tekton.dev/pipeline: ci-pipeline
+spec:
+  pipelineRef:
+    name: ci-pipeline
+
+  params:
+    - name: repo-url
+      value: "https://github.com/your-org/your-app.git"
+    - name: revision
+      value: "main"
+    - name: image-name
+      value: "docker.io/yourorg/yourapp"
+    - name: image-tag
+      value: "$(context.pipelineRun.name)"
+    - name: deploy-namespace
+      value: "production"
+
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 500Mi
+
+    - name: docker-credentials
+      secret:
+        secretName: registry-credentials
+
+    - name: git-credentials
+      secret:
+        secretName: git-credentials
+
+  taskRunTemplate:
+    serviceAccountName: pipeline-sa

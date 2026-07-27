@@ -1,0 +1,17 @@
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: validate-yaml-run-
+  labels:
+    tekton.dev/task: validate-yaml
+spec:
+  taskRef:
+    name: validate-yaml
+  params:
+    - name: yamllint-config
+      value: "relaxed"
+    - name: run-kubeval
+      value: "true"
+  workspaces:
+    - name: source
+      emptyDir: {}

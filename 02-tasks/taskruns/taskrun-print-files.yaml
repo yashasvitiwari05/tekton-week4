@@ -1,0 +1,17 @@
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: print-files-run-
+  labels:
+    tekton.dev/task: print-files
+spec:
+  taskRef:
+    name: print-files
+  params:
+    - name: sub-path
+      value: "."
+    - name: show-content
+      value: "false"
+  workspaces:
+    - name: source
+      emptyDir: {}

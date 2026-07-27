@@ -1,0 +1,205 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: ci-pipeline-reliable
+  labels:
+    app.kubernetes.io/version: "2.0"
+  annotations:
+    tekton.dev/displayName: "Reliable CI Pipeline"
+    tekton.dev/description: "CI Pipeline with retries, timeouts, finally tasks, and conditional execution."
+spec:
+  params:
+    - name: repo-url
+      type: string
+    - name: revision
+      type: string
+      default: "main"
+    - name: image-name
+      type: string
+    - name: image-tag
+      type: string
+      default: "latest"
+    - name: deploy-namespace
+      type: string
+      default: "default"
+    - name: run-integration-tests
+      type: string
+      default: "true"
+      description: Set to 'false' to skip integration tests.
+    - name: target-environment
+      type: string
+      default: "staging"
+      description: "staging or production"
+
+  workspaces:
+    - name: source
+    - name: docker-credentials
+    - name: test-results
+      optional: true
+
+  results:
+    - name: commit-sha
+      value: $(tasks.clone-repo.results.commit-sha)
+    - name: image-digest
+      value: $(tasks.build-image.results.IMAGE_DIGEST)
+
+  tasks:
+    # ── 1. Clone ──────────────────────────────────────────────────────────────
+    - name: clone-repo
+      taskRef:
+        name: clone-repository
+      retries: 3
+      timeout: "10m"
+      params:
+        - name: repo-url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.revision)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # ── 2. Print Files ────────────────────────────────────────────────────────
+    - name: print-files
+      taskRef:
+        name: print-files
+      runAfter: [clone-repo]
+      timeout: "5m"
+      workspaces:
+        - name: source
+          workspace: source
+
+    # ── 3. Validate YAML ──────────────────────────────────────────────────────
+    - name: validate-yaml
+      taskRef:
+        name: validate-yaml
+      runAfter: [clone-repo]
+      retries: 2
+      timeout: "10m"
+      workspaces:
+        - name: source
+          workspace: source
+
+    # ── 4. Unit Tests ─────────────────────────────────────────────────────────
+    - name: unit-tests
+      taskRef:
+        name: run-tests
+      runAfter: [validate-yaml, print-files]
+      retries: 1
+      timeout: "20m"
+      params:
+        - name: test-type
+          value: "unit"
+      workspaces:
+        - name: source
+          workspace: source
+
+    # ── 5. Integration Tests (conditional) ───────────────────────────────────
+    - name: integration-tests
+      taskRef:
+        name: run-tests
+      runAfter: [unit-tests]
+      retries: 1
+      timeout: "30m"
+      when:
+        - input: $(params.run-integration-tests)
+          operator: in
+          values: ["true"]
+      params:
+        - name: test-type
+          value: "integration"
+      workspaces:
+        - name: source
+          workspace: source
+
+    # ── 6. Build Image ────────────────────────────────────────────────────────
+    - name: build-image
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: kaniko
+          - name: namespace
+            value: tekton-pipelines
+      runAfter: [unit-tests]
+      retries: 2
+      timeout: "20m"
+      params:
+        - name: IMAGE
+          value: $(params.image-name):$(params.image-tag)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: dockerconfig
+          workspace: docker-credentials
+
+    # ── 7. Deploy to Staging (conditional) ───────────────────────────────────
+    - name: deploy-staging
+      taskRef:
+        name: kubernetes-deploy
+      runAfter: [build-image, integration-tests]
+      timeout: "15m"
+      when:
+        - input: $(params.target-environment)
+          operator: in
+          values: ["staging", "production"]
+      params:
+        - name: image
+          value: $(params.image-name):$(params.image-tag)
+        - name: namespace
+          value: staging
+        - name: deployment-name
+          value: myapp
+      workspaces:
+        - name: source
+          workspace: source
+
+    # ── 8. Deploy to Production (conditional) ─────────────────────────────────
+    - name: deploy-production
+      taskRef:
+        name: kubernetes-deploy
+      runAfter: [deploy-staging]
+      timeout: "15m"
+      when:
+        - input: $(params.target-environment)
+          operator: in
+          values: ["production"]
+      params:
+        - name: image
+          value: $(params.image-name):$(params.image-tag)
+        - name: namespace
+          value: production
+        - name: deployment-name
+          value: myapp
+      workspaces:
+        - name: source
+          workspace: source
+
+  # ── Finally ──────────────────────────────────────────────────────────────────
+  finally:
+    - name: workspace-cleanup
+      taskRef:
+        name: workspace-cleanup
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: publish-test-results
+      taskRef:
+        name: archive-results
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: notify-slack
+      taskRef:
+        name: send-notification
+      params:
+        - name: pipeline-status
+          value: "$(tasks.deploy-production.status)"
+        - name: commit-sha
+          value: "$(tasks.clone-repo.results.commit-sha)"
+        - name: channel
+          value: "#deployments"

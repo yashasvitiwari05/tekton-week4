@@ -1,0 +1,22 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: workspace-cleanup
+  annotations:
+    tekton.dev/displayName: "Workspace Cleanup"
+spec:
+  description: Removes all files from the shared workspace to free storage.
+
+  workspaces:
+    - name: source
+
+  steps:
+    - name: cleanup
+      image: busybox:latest
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        echo "=== Cleaning workspace: $(workspaces.source.path) ==="
+        rm -rf "$(workspaces.source.path)"/*
+        echo "Workspace cleaned."

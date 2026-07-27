@@ -1,0 +1,92 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: blue-green-deploy-pipeline
+  annotations:
+    tekton.dev/displayName: "Blue/Green Deployment Pipeline"
+spec:
+  description: >-
+    Implements a blue/green deployment strategy:
+    deploy to green slot → smoke test → conditionally promote to production.
+
+  params:
+    - name: image
+      type: string
+    - name: namespace
+      type: string
+      default: "production"
+    - name: app-name
+      type: string
+      default: "myapp"
+    - name: smoke-test-threshold
+      type: string
+      default: "90"
+      description: Minimum % success rate to promote green to production.
+
+  workspaces:
+    - name: source
+
+  results:
+    - name: active-slot
+      value: $(tasks.promote-green.results.active-slot)
+
+  tasks:
+    - name: identify-active-slot
+      taskRef:
+        name: identify-blue-green-slot
+      params:
+        - name: app-name
+          value: $(params.app-name)
+        - name: namespace
+          value: $(params.namespace)
+
+    - name: deploy-green
+      taskRef:
+        name: kubernetes-deploy
+      runAfter: [identify-active-slot]
+      params:
+        - name: image
+          value: $(params.image)
+        - name: namespace
+          value: $(params.namespace)
+        - name: deployment-name
+          value: $(params.app-name)-green
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: smoke-test-green
+      taskRef:
+        name: smoke-test
+      runAfter: [deploy-green]
+      retries: 2
+      timeout: "10m"
+      params:
+        - name: target-url
+          value: "http://$(params.app-name)-green.$(params.namespace).svc.cluster.local"
+        - name: success-threshold
+          value: $(params.smoke-test-threshold)
+
+    - name: promote-green
+      taskRef:
+        name: promote-blue-green
+      runAfter: [smoke-test-green]
+      when:
+        - input: $(tasks.smoke-test-green.results.test-status)
+          operator: in
+          values: ["PASSED"]
+      params:
+        - name: app-name
+          value: $(params.app-name)
+        - name: namespace
+          value: $(params.namespace)
+
+  finally:
+    - name: cleanup-old-slot
+      taskRef:
+        name: cleanup-blue-green-slot
+      params:
+        - name: app-name
+          value: $(params.app-name)
+        - name: namespace
+          value: $(params.namespace)

@@ -1,0 +1,69 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: send-notification
+  annotations:
+    tekton.dev/displayName: "Send Notification"
+spec:
+  description: Sends a Slack / Teams webhook notification with pipeline status.
+
+  params:
+    - name: pipeline-status
+      type: string
+      default: "Unknown"
+    - name: commit-sha
+      type: string
+      default: ""
+    - name: channel
+      type: string
+      default: "#general"
+    - name: webhook-url-secret
+      type: string
+      default: "slack-webhook"
+      description: Name of the Secret containing WEBHOOK_URL key.
+
+  steps:
+    - name: notify
+      image: curlimages/curl:latest
+      env:
+        - name: WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: $(params.webhook-url-secret)
+              key: WEBHOOK_URL
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        STATUS="$(params.pipeline-status)"
+        SHA="$(params.commit-sha)"
+        CHANNEL="$(params.channel)"
+
+        if [ "${STATUS}" = "Succeeded" ]; then
+          ICON=":white_check_mark:"
+          COLOR="good"
+        else
+          ICON=":x:"
+          COLOR="danger"
+        fi
+
+        PAYLOAD=$(cat <<EOF
+        {
+          "channel": "${CHANNEL}",
+          "attachments": [{
+            "color": "${COLOR}",
+            "title": "${ICON} Tekton Pipeline ${STATUS}",
+            "fields": [
+              {"title": "Commit", "value": "${SHA}", "short": true},
+              {"title": "Status", "value": "${STATUS}", "short": true}
+            ]
+          }]
+        }
+        EOF
+        )
+
+        echo "Sending notification to ${CHANNEL} ..."
+        curl -s -X POST \
+          -H 'Content-type: application/json' \
+          --data "${PAYLOAD}" \
+          "${WEBHOOK_URL}" || echo "Notification failed (non-fatal)"

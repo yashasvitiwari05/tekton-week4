@@ -1,0 +1,80 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: validate-yaml
+  labels:
+    app.kubernetes.io/version: "1.0"
+  annotations:
+    tekton.dev/displayName: "Validate YAML"
+    tekton.dev/description: "Validates all YAML files found in the workspace using yamllint and kubeval."
+spec:
+  description: >-
+    Runs yamllint on every *.yaml / *.yml file in the workspace,
+    then optionally runs kubeval to check Kubernetes manifests.
+
+  params:
+    - name: yamllint-config
+      type: string
+      default: "relaxed"
+      description: yamllint preset – 'relaxed' or 'default'.
+    - name: run-kubeval
+      type: string
+      default: "true"
+      description: Set to 'true' to also validate with kubeval.
+
+  workspaces:
+    - name: source
+      description: Workspace containing the repository.
+
+  results:
+    - name: yaml-file-count
+      description: Number of YAML files validated.
+    - name: validation-status
+      description: "PASSED or FAILED"
+
+  steps:
+    - name: yamllint
+      image: cytopia/yamllint:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        echo "=== Running yamllint (profile: $(params.yamllint-config)) ==="
+        FILES=$(find . -name "*.yaml" -o -name "*.yml" | sort)
+
+        if [ -z "${FILES}" ]; then
+          echo "No YAML files found."
+          printf "0" > $(results.yaml-file-count.path)
+          printf "PASSED" > $(results.validation-status.path)
+          exit 0
+        fi
+
+        COUNT=0
+        STATUS="PASSED"
+        for f in ${FILES}; do
+          echo "Validating: ${f}"
+          yamllint -d $(params.yamllint-config) "${f}" || STATUS="FAILED"
+          COUNT=$((COUNT + 1))
+        done
+
+        echo ""
+        echo "Validated ${COUNT} YAML files. Status: ${STATUS}"
+        printf "%s" "${COUNT}"  > $(results.yaml-file-count.path)
+        printf "%s" "${STATUS}" > $(results.validation-status.path)
+
+    - name: kubeval
+      image: garethr/kubeval:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        if [ "$(params.run-kubeval)" != "true" ]; then
+          echo "kubeval skipped."
+          exit 0
+        fi
+
+        echo "=== Running kubeval ==="
+        find . -name "*.yaml" -o -name "*.yml" \
+          | xargs kubeval --strict --ignore-missing-schemas || true

@@ -1,0 +1,54 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: archive-results
+  annotations:
+    tekton.dev/displayName: "Archive Test Results"
+spec:
+  description: >-
+    Archives test reports and build artifacts from the workspace.
+    Saves them as a tar.gz file and prints a summary.
+
+  params:
+    - name: artifact-path
+      type: string
+      default: "test-results"
+      description: Sub-path inside workspace to archive.
+    - name: archive-name
+      type: string
+      default: "artifacts.tar.gz"
+
+  workspaces:
+    - name: source
+
+  results:
+    - name: archive-size
+      description: Size of the generated archive in bytes.
+
+  steps:
+    - name: archive
+      image: busybox:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        TARGET="$(workspaces.source.path)/$(params.artifact-path)"
+        ARCHIVE="$(workspaces.source.path)/$(params.archive-name)"
+
+        if [ ! -d "${TARGET}" ]; then
+          echo "No artifact directory found at ${TARGET} – skipping."
+          printf "0" > $(results.archive-size.path)
+          exit 0
+        fi
+
+        echo "=== Archiving ${TARGET} to ${ARCHIVE} ==="
+        tar -czf "${ARCHIVE}" -C "$(workspaces.source.path)" "$(params.artifact-path)"
+
+        SIZE=$(stat -c%s "${ARCHIVE}" 2>/dev/null || stat -f%z "${ARCHIVE}")
+        echo "Archive size: ${SIZE} bytes"
+        printf "%s" "${SIZE}" > $(results.archive-size.path)
+
+        echo ""
+        echo "=== Archive contents ==="
+        tar -tzf "${ARCHIVE}"
